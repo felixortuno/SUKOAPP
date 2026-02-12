@@ -1,0 +1,10 @@
+streamlit
+langchain
+langchain-groq
+langchain-huggingface
+langchain-google-genai
+faiss-cpu
+PyMuPDF
+python-dotenv
+googlemaps
+pandas
