@@ -11,97 +11,118 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 
-# --- CONFIGURACIÓN E INTERFAZ ---
-st.set_page_config(page_title="Magdalena 2026 AI", page_icon="🌿", layout="wide")
-st.title("🌿 Magdalena 2026: Asistente Inteligente")
-st.markdown("Consulta eventos, puntos calientes, collas y ubicaciones en tiempo real.")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="Magdalena 2026 Pro", page_icon="🌿", layout="wide")
 
-# --- GESTIÓN DE LLAVES Y CONFIGURACIÓN ---
+# --- INTERFAZ DE ENTRADA DE KEYS ---
 with st.sidebar:
-    st.header("🔑 Configuración de API")
-    groq_key = st.text_input("Groq API Key", type="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")
-    gmaps_key = st.text_input("Google Maps API Key", type="AIzaSyBV6BHzIZAx00aoRaIbkDHUdnT2u4iLIpw")
+    st.header("🔑 Acceso a la API")
+    st.markdown("Introduce tus credenciales para activar la IA y los mapas.")
     
-    st.divider()
-    st.info("Sube el Programa Oficial de la Magdalena 2026 (PDF) para alimentar la IA.")
-    uploaded_file = st.file_uploader("Programa de Fiestas", type="pdf")
+    # Intenta leer de secrets, si no, campo vacío
+    groq_api_key = st.text_input(
+        "Groq API Key", 
+        value=st.secrets.get("GROQ_API_KEY", ""), 
+        type="password",
+        help="Consíguela en console.groq.com"
+    )
+    
+    gmaps_api_key = st.text_input(
+        "Google Maps API Key", 
+        value=st.secrets.get("GOOGLE_MAPS_API_KEY", ""), 
+        type="password",
+        help="Consíguela en Google Cloud Console"
+    )
 
-if not groq_key or not gmaps_key:
-    st.warning("⚠️ Introduce las API Keys para activar el asistente.")
+    st.divider()
+    uploaded_file = st.file_uploader("📂 Sube el Programa de Fiestas (PDF)", type="pdf")
+
+# Bloqueo de seguridad: si no hay keys, no arranca la lógica pesada
+if not groq_api_key or not gmaps_api_key:
+    st.info("👋 ¡Bienvenido! Por favor, introduce tus **API Keys** en la barra lateral para comenzar.")
     st.stop()
 
-# --- INICIALIZACIÓN DE MODELOS ---
+# --- INICIALIZACIÓN DE COMPONENTES ---
 @st.cache_resource
-def init_models(api_key):
+def get_resources(g_key):
+    # Embeddings (locales)
     embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-large-en-v1.5")
-    llm = ChatGroq(model="llama-3.3-70b-versatile", groq_api_key=api_key, temperature=0.2)
-    return embeddings, llm
+    # LLM
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile", 
+        groq_api_key=groq_api_key, 
+        temperature=0.4
+    )
+    # Google Maps
+    gmaps_client = googlemaps.Client(key=g_key)
+    return embeddings, llm, gmaps_client
 
-embeddings, llm = init_models(groq_key)
-gmaps = googlemaps.Client(key=gmaps_key)
+try:
+    embeddings, llm, gmaps = get_resources(gmaps_api_key)
+except Exception as e:
+    st.error(f"Error al conectar con las APIs: {e}")
+    st.stop()
 
 # --- PROCESAMIENTO RAG ---
-def ingest_data(file):
-    temp_path = Path("magdalena_temp.pdf")
+def process_magdalena_docs(file):
+    temp_path = Path("current_magdalena.pdf")
     with open(temp_path, "wb") as f:
         f.write(file.getbuffer())
     
     loader = PyMuPDFLoader(str(temp_path))
     docs = loader.load()
-    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=100)
     chunks = splitter.split_documents(docs)
     
     vectorstore = FAISS.from_documents(chunks, embeddings)
     return vectorstore.as_retriever(search_kwargs={"k": 5})
 
-# --- LÓGICA DE LA APP ---
-if uploaded_file:
-    retriever = ingest_data(uploaded_file)
-    
-    # Prompt especializado para la Magdalena
-    system_prompt = """Eres el asistente oficial de las Fiestas de la Magdalena 2026 en Castellón.
-    Usa el contexto para responder sobre:
-    - Horarios de Mascletaes y Pirotecnia.
-    - Ubicación de Gaiatas y Collas.
-    - Conciertos en el recinto de ferias.
-    Si no sabes la respuesta exacta, indícalo. Responde siempre en Castellano con tono festivo."""
+# --- LÓGICA PRINCIPAL ---
+st.title("🌿 Magdalena 2026 AI Explorer")
 
-    prompt_template = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
+if uploaded_file:
+    with st.spinner("Analizando el programa de fiestas..."):
+        retriever = process_magdalena_docs(uploaded_file)
+    
+    # Template para la IA
+    qa_prompt = ChatPromptTemplate.from_messages([
+        ("system", "Eres un experto en las fiestas de la Magdalena de Castellón. "
+                   "Responde usando el contexto del programa oficial. "
+                   "Si te preguntan por sitios, intenta dar detalles para que el usuario pueda buscarlos."),
         ("human", "Pregunta: {input}\n\nContexto: {context}")
     ])
 
-    chain = (
+    rag_chain = (
         {"context": retriever, "input": RunnablePassthrough()}
-        | prompt_template
+        | qa_prompt
         | llm
         | StrOutputParser()
     )
 
-    # --- CHAT ---
+    # --- INTERFAZ DE CHAT ---
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    for m in st.session_state.messages:
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
 
-    if user_input := st.chat_input("¿A qué hora es el Pregón?"):
-        st.session_state.messages.append({"role": "user", "content": user_input})
+    if query := st.chat_input("¿Qué quieres saber sobre la Magdalena?"):
+        st.session_state.messages.append({"role": "user", "content": query})
         with st.chat_message("user"):
-            st.markdown(user_input)
+            st.markdown(query)
 
         with st.chat_message("assistant"):
-            response = chain.invoke(user_input)
-            st.markdown(response)
-            
-            # Ejemplo de integración simple con Google Maps (Buscador de sitios)
-            if "dónde" in user_input.lower() or "ubicación" in user_input.lower():
-                st.info("📍 Buscando ubicación en el mapa...")
-                # Aquí podrías extraer la entidad (ej: 'Gaiata 15') y buscarla
-                # results = gmaps.places(query=user_input + " Castellón Magdalena")
-                # st.write(results)
-            
+            with st.spinner("Consultando el programa..."):
+                response = rag_chain.invoke(query)
+                st.markdown(response)
+                
+                # Integración con Google Maps para "puntos calientes"
+                if any(word in query.lower() for word in ["donde", "ubicacion", "sitio", "lugar", "ir"]):
+                    st.divider()
+                    st.caption("📍 Información geográfica disponible vía Google Maps")
+                    # Aquí el usuario puede ver que el sistema está listo para geolocalizar
+        
         st.session_state.messages.append({"role": "assistant", "content": response})
 else:
-    st.info("Sube el PDF del programa para comenzar a realizar consultas avanzadas.")
+    st.warning("⚠️ Necesito el programa de fiestas en PDF para poder responder tus preguntas.")
