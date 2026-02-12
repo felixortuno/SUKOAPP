@@ -19,8 +19,8 @@ st.markdown("Consulta eventos, puntos calientes, collas y ubicaciones en tiempo 
 # --- GESTIÓN DE LLAVES Y CONFIGURACIÓN ---
 with st.sidebar:
     st.header("🔑 Configuración de API")
-    groq_key = st.text_input("Groq API Key", type="password")
-    gmaps_key = st.text_input("Google Maps API Key", type="password")
+    groq_key = st.text_input("Groq API Key", type="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")
+    gmaps_key = st.text_input("Google Maps API Key", type="AIzaSyBV6BHzIZAx00aoRaIbkDHUdnT2u4iLIpw")
     
     st.divider()
     st.info("Sube el Programa Oficial de la Magdalena 2026 (PDF) para alimentar la IA.")
